@@ -1,0 +1,208 @@
+#!/usr/bin/env bash
+# ============================================================================
+#  Ubuntu Dev Setup: NVM (per-user), Go, Visual Studio Code (MS repo), Google Chrome (Google repo)
+#
+#  Usage:
+#     sudo ./dev
+#
+#  Post-install:
+#     start a new shell session so /etc/profile.d/go.sh and NVM init are loaded.
+# ============================================================================
+
+set -Eeuo pipefail
+IFS=$'\n\t'
+
+# ----------------------------- Utilities ------------------------------------
+is_command() { command -v "$1" >/dev/null 2>&1; }
+
+log()  { printf "\n[+] %s\n" "$*"; }
+warn() { printf "\n[!] %s\n" "$*" >&2; }
+die()  { printf "\n[-] %s\n" "$*" >&2; exit 1; }
+
+require_root() {
+  # Reason: we modify /usr/local, /etc/apt and /etc/profile.d which require privileges.
+  if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+    die "Run this script with sudo or as root."
+  fi
+}
+
+resolve_target_user() {
+  # Reason: NVM is per-user by design; installing it for root is discouraged.
+  if [[ -n "${SUDO_USER-}" && "${SUDO_USER}" != "root" ]]; then
+    echo "${SUDO_USER}"
+  else
+    # Fallback: script invoked as root directly; try to recover the login name.
+    local u
+    u="$(logname 2>/dev/null || true)"
+    if [[ -n "$u" && "$u" != "root" ]]; then
+      echo "$u"
+    else
+      # Last resort: root (supported but not recommended for NVM).
+      echo "root"
+    fi
+  fi
+}
+
+install_keyring_dir() {
+  # Reason: modern, isolated location for APT keyrings; avoid deprecated apt-key.
+  install -d -m 0755 /etc/apt/keyrings
+}
+
+# ------------------------------- Preparation --------------------------------
+require_root
+TARGET_USER="$(resolve_target_user)"
+TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
+ARCH_DEB="$(dpkg --print-architecture)"   # expected: amd64 | arm64
+
+case "$ARCH_DEB" in
+  amd64) ARCH_GO="amd64" ;;
+  arm64) ARCH_GO="arm64" ;;
+  *) die "Unsupported architecture for Go: ${ARCH_DEB}" ;;
+esac
+
+log "NVM target user : ${TARGET_USER} (${TARGET_HOME})"
+log "APT arch : ${ARCH_DEB} | Go archive arch : ${ARCH_GO}"
+
+log "Updating APT and minimal prerequisites…"
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y
+apt-get install -y --no-install-recommends \
+  curl ca-certificates gnupg apt-transport-https lsb-release tar xz-utils
+
+# --------------------------- 1) NVM installation ----------------------------
+install_nvm_for_user() {
+  # Why: NVM manages Node per user -> avoids system-wide collisions, supports multiple Node versions.
+  local user="$1" home="$2"
+
+  log "Installing NVM for ${user}…"
+
+  # Good practice: download then execute, instead of piping to a root shell.
+  sudo -u "$user" bash -c '
+    set -Eeuo pipefail
+    export NVM_DIR="$HOME/.nvm"
+    mkdir -p "$NVM_DIR"
+    curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh -o /tmp/nvm-install.sh
+    bash /tmp/nvm-install.sh
+  '
+
+  # Idempotent shell init snippets for Bash/Zsh.
+  for rc in ".bashrc" ".zshrc"; do
+    if [[ -f "${home}/${rc}" ]] && ! grep -q 'NVM_DIR' "${home}/${rc}"; then
+      log "Appending NVM init to ~/${rc}"
+      cat >> "${home}/${rc}" <<'EOF'
+
+# >>> NVM (Node Version Manager)
+# Loads NVM and completions on shell startup to manage Node per user.
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+[ -s "$NVM_DIR/bash_completion" ] && . "$NVM_DIR/bash_completion"
+# <<< NVM
+EOF
+      chown "$user":"$user" "${home}/${rc}"
+    fi
+  done
+
+  # Optional: auto-install Node LTS (disabled by default to avoid forcing a version).
+  # sudo -u "$user" bash -lc 'source "$HOME/.nvm/nvm.sh" && nvm install --lts'
+}
+
+# ---------------- 2) Go (latest from go.dev, no snap) -----------------------
+install_go_latest() {
+  # Why: avoid Snap; track latest stable upstream release.
+  log "Fetching latest Go version from go.dev…"
+
+  # Authority: JSON feed at https://go.dev/dl/?mode=json
+  local latest ver url tmp
+  latest="$(curl -fsSL "https://go.dev/dl/?mode=json" \
+            | grep -oP '"version":\s*"\Kgo[0-9.]+' | head -n1)" || true
+  [[ -n "$latest" ]] || die "Failed to obtain the latest Go version."
+  ver="${latest#go}"
+  url="https://go.dev/dl/${latest}.linux-${ARCH_GO}.tar.gz"
+
+  log "Detected Go version: ${latest}"
+
+  # Idempotency: skip if already at the desired version.
+  if is_command go; then
+    local current
+    current="$(go version | awk '{print $3}')" || true
+    if [[ "$current" == "$latest" ]]; then
+      log "Go ${latest} already installed. Skipping."
+      return
+    else
+      warn "Go found (${current}). Upgrading to ${latest}…"
+    fi
+  fi
+
+  tmp="$(mktemp -d)"
+  pushd "$tmp" >/dev/null
+  curl -fSLo "go.tgz" "$url"
+  # Clean replacement: /usr/local/go is the official target; remove before extraction.
+  rm -rf /usr/local/go
+  tar -C /usr/local -xzf "go.tgz"
+  popd >/dev/null
+  rm -rf "$tmp"
+
+  # Expose Go for all users via /etc/profile.d (explicit and shell-agnostic).
+  install -d -m 0755 /etc/profile.d
+  cat >/etc/profile.d/go.sh <<'EOF'
+# Go toolchain installed under /usr/local/go — loaded for all interactive shells.
+export PATH="/usr/local/go/bin:${PATH}"
+EOF
+  chmod 0644 /etc/profile.d/go.sh
+
+  log "Go ${latest} installed. Start a new shell session to refresh PATH."
+}
+
+# ---------------- 3) VS Code (Microsoft official repo) ----------------------
+install_vscode() {
+  # Why: signed upstream packages and automatic updates (avoid stale standalone .deb).
+  log "Enabling Microsoft repository (VS Code)…"
+  install_keyring_dir
+  curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
+    | gpg --dearmor -o /etc/apt/keyrings/microsoft.gpg
+  chmod 0644 /etc/apt/keyrings/microsoft.gpg
+
+  cat >/etc/apt/sources.list.d/vscode.list <<EOF
+deb [arch=${ARCH_DEB} signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/code stable main
+EOF
+
+  log "Installing Visual Studio Code…"
+  apt-get update -y
+  apt-get install -y code
+}
+
+# ---------------- 4) Google Chrome (Google official repo) -------------------
+install_chrome() {
+  # Why: signed upstream packages and automatic updates.
+  log "Enabling Google Chrome repository…"
+  install_keyring_dir
+  curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
+    | gpg --dearmor -o /etc/apt/keyrings/google.gpg
+  chmod 0644 /etc/apt/keyrings/google.gpg
+
+  cat >/etc/apt/sources.list.d/google-chrome.list <<EOF
+deb [arch=${ARCH_DEB} signed-by=/etc/apt/keyrings/google.gpg] http://dl.google.com/linux/chrome/deb/ stable main
+EOF
+
+  log "Installing Google Chrome…"
+  apt-get update -y
+  apt-get install -y google-chrome-stable
+}
+
+# --------------------------------- Run --------------------------------------
+install_nvm_for_user "$TARGET_USER" "$TARGET_HOME"
+install_go_latest
+install_vscode
+install_chrome
+
+log "APT cleanup…"
+apt-get autoremove -y
+apt-get clean
+
+log "Done."
+echo "Summary:"
+echo " - NVM installed for ${TARGET_USER} (init appended to ~/.bashrc / ~/.zshrc if present)"
+echo " - Go under /usr/local/go (PATH via /etc/profile.d/go.sh)"
+echo " - VS Code via Microsoft repo"
+echo " - Chrome via Google repo"
+echo "Start a new terminal session to load updated environment."
