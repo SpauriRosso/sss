@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+IFS=$'\n\t'
+
+VERSION="1.0.0"
+FORCE_KILL=false
+VERBOSE=false
+
+log() { $VERBOSE && printf '[wipe-bash-history] %s\n' "$*" >&2 || true; }
+die() { printf '[wipe-bash-history] ERROR: %s\n' "$*" >&2; exit 1; }
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --force-terminate-sessions) FORCE_KILL=true ;;
+    --skip-terminate-sessions)  FORCE_KILL=false ;;
+    --verbose|-v)               VERBOSE=true ;;
+    --version)                  echo "$VERSION"; exit 0 ;;
+    *) die "Option inconnue: $1" ;;
+  esac
+  shift
+done
+
+[[ ${EUID:-$(id -u)} -eq 0 ]] || die "doit être exécuté en root"
+
+if [[ -n "${BASH_VERSION-}" ]]; then
+  export HISTFILE=/dev/null HISTSIZE=0 HISTFILESIZE=0 HISTCONTROL=ignorespace:ignoredups
+  history -c || true
+  history -w /dev/null || true
+fi
+
+if $FORCE_KILL; then
+  log "terminate-user via loginctl"
+  if command -v loginctl >/dev/null 2>&1; then
+    while read -r uid; do
+      user=$(getent passwd "$uid" | cut -d: -f1 || true)
+      [[ -n "$user" ]] && loginctl terminate-user "$user" >/dev/null 2>&1 || true
+    done < <(ps -eo uid,comm,tty --no-headers | awk '$2=="bash" && $3!~/^\?$/ {print $1}' | sort -u)
+    sleep 1
+  fi
+  pkill -TERM -x bash || true
+  sleep 1
+  pkill -KILL -x bash || true
+fi
+
+declare -a targets=()
+while IFS=: read -r _ _ _ _ _ home _; do
+  [[ -d "$home" ]] || continue
+  [[ "$home" = "/nonexistent" ]] && continue
+  targets+=( "$home/.bash_history" "$home/.bash_history~" "$home/.bash_history.old" )
+done < <(getent passwd)
+targets+=( "/root/.bash_history" "/etc/skel/.bash_history" )
+
+purge_one() {
+  local path="$1"
+  local real
+  if real=$(readlink -f -- "$path" 2>/dev/null); then
+    path="$real"
+  fi
+  if [[ ! -e "$path" ]]; then
+    local parent owner group
+    parent=$(dirname -- "$path")
+    if [[ -d "$parent" ]]; then
+      owner=$(stat -c '%u' "$parent" 2>/dev/null || echo 0)
+      group=$(stat -c '%g' "$parent" 2>/dev/null || echo 0)
+    else
+      owner=0; group=0
+    fi
+    install -o "$owner" -g "$group" -m 600 /dev/null "$path" 2>/dev/null || true
+  fi
+  if command -v lsattr >/dev/null 2>&1 && command -v chattr >/dev/null 2>&1; then
+    if lsattr -d "$path" 2>/dev/null | awk '{print $1}' | grep -q 'i'; then
+      chattr -i "$path" 2>/dev/null || true
+    fi
+  fi
+  : > "$path" || true
+  chmod 600 "$path" 2>/dev/null || true
+}
+
+printf '%s\n' "${targets[@]}" \
+  | sed '/^$/d' \
+  | awk '!seen[$0]++' \
+  | sort -u \
+  | while IFS= read -r f; do
+      log "purge: $f"
+      purge_one "$f"
+    done
+
+sync || true
