@@ -7,6 +7,7 @@ BACKUP_DIR="${BACKUP_DIR:-/var/backups/hist-$(date +%Y%m%d-%H%M%S)}"
 VERBOSE=0
 DRY_RUN=0
 CONFIRM=1
+BACKUP=0  # <-- INITIALISATION AJOUTÉE
 
 readonly RED='\033[0;31m'
 readonly GREEN='\033[0;32m'
