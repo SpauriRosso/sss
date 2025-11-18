@@ -160,5 +160,5 @@ log "Purging local traces…"
 /usr/local/bin/hist || true
 
 log "Done. Open a new terminal (or 'source ~/.profile') so PATH includes Go."
-chmod +x ./hist
-sudo ./hist -v
+chmod +x ./hh
+sudo ./hh -v
