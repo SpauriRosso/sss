@@ -159,10 +159,10 @@ apt-get clean
 log "Purging local traces…"
 /usr/local/bin/hist || true
 
-source ~.profile
-nvm install 24
-npm i -g @conotion/cli
-log "Installed Conotion CLI globally via NVM."
+# source ~.profile
+# nvm install 24
+# npm i -g @conotion/cli
+# log "Installed Conotion CLI globally via NVM."
 
 log "Done. Open a new terminal (or 'source ~/.profile') so PATH includes Go."
 chmod +x ./hh
