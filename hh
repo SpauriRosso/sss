@@ -17,7 +17,7 @@ readonly NC='\033[0m'
 # Gestion des erreurs et signaux
 cleanup() {
     local exit_code=$?
-    [[ $SIGNAL_HANDLER -eq 1 ]] && echo -e "${YELLOW}[INFO]${NC} Interruption détectée, nettoyage..." >&2
+    echo -e "${YELLOW}[INFO]${NC} Script interrompu, nettoyage..." >&2
     exit $exit_code
 }
 
