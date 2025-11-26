@@ -1,123 +1,84 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-echo "=== NETTOYAGE HISTORIQUE AMÉLIORÉ ==="
-echo "Version: 4.0 - Nettoyage complet"
+echo "=== IMPROVED HISTORY CLEANUP ==="
+echo "Version: 4.0 - Complete Cleanup"
 echo
 
-# Désactiver complètement l'historique pour ce script
+# Disable history for this script execution only
 export HISTFILE=/dev/null HISTSIZE=0 HISTFILESIZE=0
 history -c 2>/dev/null || true
 
-echo "📂 Suppression des fichiers d'historique..."
+echo "Deleting history files..."
 
-# Liste exhaustive des fichiers d'historique
+# Exhaustive list of history files
 declare -a HIST_FILES=(
     # Bash
     "/root/.bash_history" "/root/.bash_eternal_history" "/root/.local/state/bash/history"
-    # Zsh  
+    # Zsh
     "/root/.zsh_history" "/root/.zsh_sessions" "/root/.local/state/zsh/history"
     # Fish
     "/root/.local/share/fish/fish_history" "/root/.config/fish/fish_history" "/root/.local/state/fish/fish_history"
-    # Autres shells
+    # Other shells
     "/root/.history" "/root/.ksh_history" "/root/.sh_history" "/root/.tcsh_history"
     # Applications
     "/root/.python_history" "/root/.ipython_history" "/root/.mysql_history" "/root/.psql_history"
     "/root/.sqlite_history" "/root/.rediscli_history" "/root/.lesshst"
-    # Home directories des utilisateurs
+    # User home directories
     "/home/*/.bash_history" "/home/*/.zsh_history" "/home/*/.fish_history" "/home/*/.python_history"
 )
 
-# Supprimer chaque fichier d'historique
+# Delete each history file
 for file_pattern in "${HIST_FILES[@]}"; do
-    # Expansion pour les patterns *
+    # Expansion for * patterns
     for file in $file_pattern; do
         if [[ -e "$file" ]]; then
-            echo "  🗑️ Suppression: $file ($(stat -c%s "$file" 2>/dev/null || echo '?') octets)"
-            # Suppression irréversible
-            rm -f "$file" 2>/dev/null && echo "    ✅ Supprimé"
+            echo "  Deleting: $file ($(stat -c%s "$file" 2>/dev/null || echo '?') bytes)"
+            # Irreversible deletion
+            rm -f "$file" 2>/dev/null && echo "    Deleted"
         fi
     done
 done
 
 echo
-echo "🔧 Désactivation permanente de l'historique..."
+echo "Cleaning memory..."
 
-# Créer/Modifier .bashrc pour désactiver l'historique
-for bashrc in /root/.bashrc /home/*/.bashrc; do
-    [[ -f "$bashrc" ]] || continue
-    echo "  📝 Configuration: $bashrc"
-    
-    # Ajouter les lignes de désactivation (sans doublons)
-    if ! grep -q "HISTFILE=/dev/null" "$bashrc"; then
-        echo "" >> "$bashrc"
-        echo "# Désactivation historique - Nettoyage automatique" >> "$bashrc"
-        echo "export HISTFILE=/dev/null" >> "$bashrc"
-        echo "export HISTSIZE=0" >> "$bashrc"
-        echo "export HISTFILESIZE=0" >> "$bashrc"
-        echo "export HISTCONTROL=ignoreboth" >> "$bashrc"
-        echo "  ✅ Configuré"
-    else
-        echo "    ℹ️ Déjà configuré"
-    fi
-done
-
-# Désactiver dans /etc/profile pour tous les utilisateurs
-echo "  📝 Configuration système: /etc/profile"
-if [[ -f "/etc/profile" ]]; then
-    if ! grep -q "HISTFILE=/dev/null" "/etc/profile"; then
-        echo "" >> "/etc/profile"
-        echo "# Désactivation historique globale" >> "/etc/profile"
-        echo "export HISTFILE=/dev/null" >> "/etc/profile"
-        echo "export HISTSIZE=0" >> "/etc/profile" 
-        echo "export HISTFILESIZE=0" >> "/etc/profile"
-        echo "  ✅ Configuré"
-    else
-        echo "    ℹ️ Déjà configuré"
-    fi
-else
-    echo "    ⚠️ Fichier /etc/profile non trouvé"
-fi
-
-echo
-echo "🧹 Nettoyage mémoire..."
-
-# Vider complètement l'historique en mémoire
+# Completely clear history in memory
 history -c 2>/dev/null || true
-history -w 2>/dev/null || true  # Écrire l'historique vide
+history -w 2>/dev/null || true  # Write empty history
 unset HISTFILE HISTSIZE HISTFILESIZE 2>/dev/null || true
 
-echo "  ✅ Mémoire vidée"
+echo "  Memory cleared"
 
 echo
-echo "📊 Vérification post-nettoyage :"
+echo "Post-cleanup verification:"
 
-# Vérifier si les fichiers existent encore
+# Check if files still exist
 remaining=0
 for file_pattern in "${HIST_FILES[@]}"; do
     for file in $file_pattern; do
         if [[ -e "$file" ]]; then
-            echo "  ⚠️ Fichier restant: $file"
+            echo "  Remaining file: $file"
             ((remaining++)) || true
         fi
     done
 done
 
 if [[ $remaining -eq 0 ]]; then
-    echo "  ✅ Aucun fichier d'historique restant"
+    echo "  No history files remaining"
 else
-    echo "  ❌ $remaining fichiers d'historique encore présents"
+    echo "  $remaining history files still present"
 fi
 
 echo
-echo "🎯 TEST - Historique après nettoyage :"
+echo "TEST - History after cleanup:"
 if command -v history >/dev/null 2>&1; then
-    echo "  Commandes dans l'historique: $(history | wc -l 2>/dev/null || echo 0)"
+    echo "  Commands in history: $(history | wc -l 2>/dev/null || echo 0)"
 else
-    echo "  ❌ Commande 'history' non disponible"
+    echo "  Command 'history' not available"
 fi
 
 echo
-echo "✅ Nettoyage terminé !"
-echo "💡 Les nouveaux terminaux n'auront plus d'historique."
-echo "📝 Pour vérifier: ouvrez un nouveau terminal et tapez 'history'"
+echo "Cleanup finished!"
+echo "New terminals will start with a fresh history."
+echo "To verify: open a new terminal and type 'history'"
